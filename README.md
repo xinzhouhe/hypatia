@@ -80,6 +80,132 @@ BibTeX citation:
 5. The reproduction of the paper is essentially the tutorial for Hypatia.
    Please navigate to `paper/README.md`.
 
+### Installation on RHEL / CentOS / HPC Systems
+
+The default installation script (`hypatia_install_dependencies.sh`) is designed for Ubuntu/Debian systems. For RHEL-based systems (RHEL, CentOS, Rocky Linux, AlmaLinux) or HPC environments where you don't have sudo access, follow these steps:
+
+#### Prerequisites
+
+- Python 3.7+
+- MPI library (OpenMPI or MVAPICH) - typically available via `module load` on HPC systems
+- Boost library - typically available via `module load` on HPC systems
+- C++ compiler (gcc or Intel icpc)
+
+#### Step 1: Load Required Modules (HPC Systems)
+
+```bash
+# Example for systems with Lmod
+module load openmpi/5.0.2
+module load boost/1.83.0
+```
+
+#### Step 2: Install Python Dependencies
+
+```bash
+# Core dependencies
+pip install --user numpy astropy ephem networkx sgp4 geopy matplotlib statsmodels
+
+# Cartopy (requires proj/geos - usually pre-installed on RHEL)
+pip install --user cartopy
+
+# Custom packages
+pip install --user git+https://github.com/snkas/exputilpy.git@v1.6
+pip install --user git+https://github.com/snkas/networkload.git@v1.3
+```
+
+#### Step 3: Initialize Git Submodules
+
+```bash
+git submodule update --init --recursive
+```
+
+#### Step 4: Patch Boost Detection (Python 3 Compatibility)
+
+The waf build system has a Python 3 compatibility issue in the boost detection code. Apply this patch:
+
+```bash
+# Edit ns3-sat-sim/simulator/waf-tools/boost.py
+# Find line 186 (in function boost_get_toolset):
+#   return isinstance(toolset, str) and toolset or toolset(self.env)
+# Replace with:
+#   if isinstance(toolset, str):
+#       return toolset
+#   else:
+#       return toolset(self.env)
+```
+
+Or apply using sed:
+```bash
+sed -i 's/return isinstance(toolset, str) and toolset or toolset(self.env)/if isinstance(toolset, str):\n\t\treturn toolset\n\telse:\n\t\treturn toolset(self.env)/' ns3-sat-sim/simulator/waf-tools/boost.py
+```
+
+**Note:** This patch must be applied AFTER running `build.sh` because the build script extracts a fresh copy from `ns-3.31.zip`. For manual builds, patch the file after extraction.
+
+#### Step 5: Build ns3-sat-sim
+
+The standard `build.sh` script extracts a fresh copy and overwrites patches. For RHEL, build manually:
+
+```bash
+cd ns3-sat-sim
+
+# If building for the first time, extract ns-3.31
+unzip ns-3.31.zip
+cp -r ns-3.31/* simulator/
+rm -r ns-3.31
+
+# Apply the boost.py patch HERE (after extraction, before configure)
+cd simulator
+# Apply the patch as described in Step 4
+
+# Configure and build
+./waf configure --build-profile=debug --enable-mpi --enable-examples --enable-tests --out=build/debug_all
+./waf -j4
+```
+
+For optimized builds:
+```bash
+./waf configure --build-profile=optimized --enable-mpi --out=build/optimized
+./waf -j4
+```
+
+#### Step 6: Run Tests
+
+```bash
+# Test satgenpy
+cd satgenpy
+python3 -m unittest discover -v -s tests
+cd ..
+
+# Test ns3-sat-sim
+cd ns3-sat-sim/simulator
+cd test_data && bash extract_test_data.sh && cd ..
+python3 test.py -v -s "satellite-network"
+cd ../..
+```
+
+#### Known Issues on RHEL/HPC
+
+1. **Intel Compiler Warnings**: If using Intel icpc, you'll see deprecation warnings. These are informational only and don't affect the build.
+
+2. **lcov Not Available**: Coverage reports require lcov which may not be installed. Tests will still pass without it.
+
+3. **One satgenpy Test Failure**: `test_around_equator_connectivity_with_starlink` may fail due to a file format issue. This is a minor test data issue, not an installation problem.
+
+4. **Package Names Differ**: RHEL uses different package names:
+   - Ubuntu `libproj-dev` → RHEL `proj-devel`
+   - Ubuntu `libgeos-dev` → RHEL `geos-devel`
+   - Ubuntu `libopenmpi-dev` → RHEL `openmpi-devel`
+
+#### Verification
+
+```bash
+# Verify Python dependencies
+python3 -c "import numpy, astropy, ephem, networkx, sgp4, geopy, matplotlib, statsmodels, cartopy, exputil, networkload; print('All dependencies OK')"
+
+# Verify ns3-sat-sim build
+test -d ns3-sat-sim/simulator/build/debug_all && echo "Build OK" || echo "Build missing"
+```
+
 ### Visualizations
 Most of the visualizations in the paper are available [here](https://leosatsim.github.io/).
 All of the visualizations can be regenerated using scripts available in `satviz` as discussed above.
